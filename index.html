@@ -151,7 +151,7 @@ video {
     <div id="statusText">Press Start Otto to begin.</div>
     <div class="controls">
       <button class="primary" id="startBtn" onclick="startOtto()">Start Otto</button>
-      <button id="listenBtn" onclick="listen()" disabled>🎤 Talk to Otto</button>
+      <button id="listenBtn" onclick="toggleMute()" disabled>🎤 Mute</button>
       <button onclick="testVoice()">Test Voice</button>
     </div>
   </div>
@@ -269,6 +269,8 @@ let speaking = false;
 let recognition = null;
 let cameraBlocked = false;
 let cameraOffUntil = 0;
+let muted = false;
+let autoListen = false;
 
 const robot = document.getElementById("robot");
 const statusText = document.getElementById("statusText");
@@ -303,6 +305,7 @@ function speak(message, expression = "speaking") {
     return;
   }
 
+  if (recognition && recognizing) recognition.abort();
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(message);
   utterance.lang = language();
@@ -318,6 +321,7 @@ function speak(message, expression = "speaking") {
     setFace("idle");
     setStatus("Otto is ready.");
     resetIdle();
+    if (autoListen && !muted) setTimeout(listen, 400);
   };
   utterance.onerror = () => {
     speaking = false;
@@ -336,6 +340,7 @@ function testVoice() {
 
 function startOtto() {
   started = true;
+  autoListen = true;
   document.getElementById("listenBtn").disabled = false;
   document.getElementById("startBtn").textContent = "Otto Started";
   setFace("happy");
@@ -356,7 +361,7 @@ function listen() {
     return;
   }
 
-  if (recognizing) return;
+  if (recognizing || speaking || muted) return;
 
   recognition = new SpeechRecognition();
   recognition.lang = language();
@@ -376,610 +381,38 @@ function listen() {
 
   recognition.onerror = () => {
     recognizing = false;
-    setFace("idle");
-    setStatus("Couldn't hear clearly. Try again.");
-    resetIdle();
   };
 
   recognition.onend = () => {
     recognizing = false;
-    if (!speaking) setFace("idle");
+    if (!speaking && !muted) setFace("idle");
     resetIdle();
-  };
-
-  try {
-    recognition.start();
-  } catch (error) {
-    setStatus("Microphone could not start.");
-  }
-}
-
-function handleCommand(words) {
-  const ar = language() === "ar-EG";
-  const say = (en, eg, face) => speak(ar ? eg : en, face);
-
-  if (words.includes("hello") || words.includes("hi") ||
-      words.includes("مرحبا") || words.includes("اهلا")) {
-    say("Hello! Nice to hear you.", "أهلاً! عامل إيه؟", "happy");
-  } else if (words.includes("joke") || words.includes("نكتة")) {
-    say("Why did the computer go to the doctor? It had a virus!",
-        "مرة كمبيوتر راح للدكتور، قاله عندي فيروس!",
-        "happy");
-  } else if (words.includes("youtube") || words.includes("يوتيوب")) {
-    window.open("https://www.youtube.com", "_blank");
-    say("Opening YouTube.", "بفتح يوتيوب.", "happy");
-  } else if (words.includes("camera") || words.includes("كاميرا")) {
-    say("You can control the camera using the camera buttons.",
-        "تقدر تتحكم في الكاميرا من أزرار الكاميرا.", "idle");
-  } else if (words.includes("what is this") || words.includes("ايه ده")) {
-    say("I need the AI vision service connected before I can identify objects.",
-        "محتاجين نوصل نظام الرؤية بالذكاء الاصطناعي عشان أقدر أتعرف على الأشياء.",
-        "thinking");
-  } else {
-    say("I heard you, but my AI brain is not connected yet.",
-        "سمعتك، بس لسه محتاجين نوصل عقل الذكاء الاصطناعي بتاعي.",
-        "confused");
-  }
-}
-
-async function openCamera() {
-  if (cameraBlocked && Date.now() < cameraOffUntil) {
-    setStatus("Camera is temporarily turned off.");
-    return;
-  }
-
-  if (cameraBlocked && cameraOffUntil === Infinity) {
-    setStatus("Camera is locked off until you turn it on manually.");
-    return;
-  }
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus("Camera needs a supported browser and secure connection.");
-    return;
-  }
-
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
-    });
-
-    cameraPreview.srcObject = cameraStream;
-    cameraPreview.classList.remove("hidden");
-    document.getElementById("cameraState").textContent = "On";
-    document.getElementById("cameraState").style.color = "#65e6a1";
-    setStatus("Camera is on.");
-  } catch (error) {
-    setStatus("Camera permission was not granted.");
-  }
-}
-
-function stopCamera() {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-  cameraPreview.srcObject = null;
-  cameraPreview.classList.add("hidden");
-  document.getElementById("cameraState").textContent = "Off";
-  document.getElementById("cameraState").style.color = "#ffc66d";
-}
-
-function openCameraOptions() {
-  document.getElementById("cameraOptions").classList.remove("hidden");
-}
-
-function closeCameraOptions() {
-  document.getElementById("cameraOptions").classList.add("hidden");
-}
-
-function turnCameraOffTimed() {
-  const minutes = Number(document.getElementById("offDuration").value);
-  stopCamera();
-  cameraBlocked = true;
-  cameraOffUntil = Date.now() + minutes * 60 * 1000;
-
-  clearTimeout(cameraTimer);
-  cameraTimer = setTimeout(() => {
-    cameraBlocked = false;
-    cameraOffUntil = 0;
-    setStatus("Camera can be turned on again.");
-  }, minutes * 60 * 1000);
-
-  closeCameraOptions();
-  setStatus("Camera off for " + minutes + " minutes.");
-}
-
-function turnCameraOffUntilManual() {
-  stopCamera();
-  clearTimeout(cameraTimer);
-  cameraBlocked = true;
-  cameraOffUntil = Infinity;
-  closeCameraOptions();
-  setStatus("Camera off until you turn it on manually.");
-}
-
-function resetIdle() {
-  clearTimeout(idleTimer);
-  if (!started) return;
-
-  const delay = Number(document.getElementById("idleDelay").value);
-  if (!delay) return;
-
-  idleTimer = setTimeout(() => {
-    if (recognizing || speaking) {
-      resetIdle();
-      return;
+    if (autoListen && !muted && !speaking) {
+      setTimeout(listen, 400);
     }
-
-    const lines = language() === "ar-EG"
-      ? ["في حد هنا؟", "عاملين إيه؟", "أنا موجود لو محتاجين حاجة."]
-      : ["Is anybody here?", "How is everyone doing?", "I'm here if you need me."];
-
-    const line = lines[Math.floor(Math.random() * lines.length)];
-    speak(line, "idle");
-  }, delay * 1000);
-}
-
-function saveSettings() {
-  localStorage.setItem("ottoLanguage", language());
-  localStorage.setItem("ottoIdle", document.getElementById("idleDelay").value);
-  localStorage.setItem("ottoVoice", document.getElementById("voiceChoice").value);
-}
-
-function loadSettings() {
-  const lang = localStorage.getItem("ottoLanguage");
-  const idle = localStorage.getItem("ottoIdle");
-  if (lang) document.getElementById("language").value = lang;
-  if (idle) document.getElementById("idleDelay").value = idle;
-}
-
-function loadVoices() {
-  const selector = document.getElementById("voiceChoice");
-  const oldValue = localStorage.getItem("ottoVoice") || "";
-  const voices = speechSynthesis.getVoices();
-
-  selector.innerHTML = '<option value="">Default voice</option>';
-  voices.forEach(voice => {
-    const option = document.createElement("option");
-    option.value = voice.name;
-    option.textContent = voice.name + " (" + voice.lang + ")";
-    selector.appendChild(option);
-  });
-
-  if (voices.some(v => v.name === oldValue)) selector.value = oldValue;
-}
-
-function openWebsite() {
-  const value = document.getElementById("webAddress").value.trim();
-  if (!value) return;
-
-  let url;
-  try {
-    url = new URL(value.includes("://") ? value : "https://" + value);
-    if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-  } catch {
-    url = new URL("https://www.google.com/search");
-    url.searchParams.set("q", value);
-  }
-
-  window.open(url.href, "_blank", "noopener");
-}
-
-function openYouTube() {
-  const query = document.getElementById("webAddress").value.trim();
-  const url = query
-    ? "https://www.youtube.com/results?search_query=" + encodeURIComponent(query)
-    : "https://www.youtube.com";
-  window.open(url, "_blank", "noopener");
-}
-
-loadSettings();
-if ("speechSynthesis" in window) {
-  loadVoices();
-  speechSynthesis.onvoiceschanged = loadVoices;
-}
-
-document.addEventListener("pointerdown", () => {
-  if (started) resetIdle();
-});
-</script>
-</body>
-</html>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Otto Robot</title>
-<style>
-:root {
-  --bg:#08111f;
-  --panel:#111f33;
-  --blue:#43c8ff;
-  --text:#eef7ff;
-  --muted:#9bb0c8;
-}
-* { box-sizing:border-box; }
-body {
-  margin:0;
-  background:var(--bg);
-  color:var(--text);
-  font-family:Arial,sans-serif;
-}
-header {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:18px 22px;
-  background:#0c192a;
-  border-bottom:1px solid #24364d;
-}
-.logo {font-size:25px;font-weight:bold;color:var(--blue);}
-.status {font-size:13px;color:#a8c0d9;}
-main {max-width:900px;margin:auto;padding:20px;}
-nav {
-  display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;
-}
-button,select,input {
-  border:1px solid #304762;
-  background:#172941;
-  color:white;
-  border-radius:10px;
-  padding:12px;
-  font-size:15px;
-}
-button {cursor:pointer;}
-button:hover {background:#24415f;}
-button.primary {background:#087db5;border-color:#168fc8;}
-button.danger {background:#8d293b;border-color:#b83e54;}
-button:disabled {opacity:.5;cursor:not-allowed;}
-.panel {
-  background:var(--panel);
-  border:1px solid #263d58;
-  border-radius:18px;
-  padding:20px;
-  margin-bottom:16px;
-}
-.screen {text-align:center;min-height:390px;}
-.robot {
-  width:230px;height:220px;
-  background:linear-gradient(145deg,#d9f5ff,#7bbbd8);
-  border:8px solid #3c7797;
-  border-radius:48% 48% 42% 42%;
-  margin:25px auto 15px;
-  position:relative;
-  box-shadow:0 0 35px #168ac455;
-  transition:.25s;
-}
-.eyes {
-  display:flex;justify-content:center;gap:48px;
-  position:absolute;top:65px;width:100%;
-}
-.eye {
-  width:29px;height:36px;border-radius:50%;
-  background:#102d49;position:relative;
-  animation:blink 5s infinite;
-}
-.eye:after {
-  content:"";position:absolute;
-  width:8px;height:8px;border-radius:50%;
-  background:white;top:6px;left:7px;
-}
-.mouth {
-  position:absolute;top:140px;left:50%;
-  transform:translateX(-50%);
-  width:54px;height:17px;
-  border-bottom:6px solid #17415b;
-  border-radius:50%;
-}
-.robot.happy .mouth {
-  height:30px;width:65px;border-bottom-width:7px;
-}
-.robot.surprised .mouth {
-  width:24px;height:28px;border:5px solid #17415b;
-  border-radius:50%;
-}
-.robot.confused {transform:rotate(-5deg);}
-.robot.confused .mouth {
-  width:42px;border-bottom:0;
-  border-top:5px solid #17415b;
-}
-.robot.listening {box-shadow:0 0 45px #43c8ff;}
-.robot.speaking .mouth {animation:talk .2s infinite alternate;}
-.robot.thinking .mouth {width:35px;}
-@keyframes blink {
-  0%,46%,50%,100% {transform:scaleY(1);}
-  48% {transform:scaleY(.08);}
-}
-@keyframes talk {
-  from {height:8px;}
-  to {height:30px;}
-}
-#statusText {color:var(--muted);margin:12px;}
-.controls {display:flex;justify-content:center;gap:10px;flex-wrap:wrap;}
-video {
-  width:100%;max-height:260px;
-  background:#050a12;border-radius:12px;
-  object-fit:cover;
-}
-.hidden {display:none!important;}
-.section-title {font-size:19px;margin:0 0 14px;}
-.setting {display:flex;flex-direction:column;gap:8px;margin:15px 0;}
-.setting label {color:#c4d5e8;}
-.small {font-size:13px;color:var(--muted);line-height:1.5;}
-#cameraState {font-weight:bold;color:#ffc66d;}
-</style>
-</head>
-<body>
-
-<header>
-  <div class="logo">OTTO</div>
-  <div class="status" id="topStatus">Ready to start</div>
-</header>
-
-<main>
-<nav>
-  <button onclick="showPage('home')">Home</button>
-  <button onclick="showPage('browser')">Browser</button>
-  <button onclick="showPage('control')">Control Center</button>
-  <button onclick="showPage('settings')">Settings</button>
-</nav>
-
-<section id="home" class="page">
-  <div class="panel screen">
-    <h2>Meet Otto</h2>
-    <div class="robot" id="robot">
-      <div class="eyes">
-        <div class="eye"></div>
-        <div class="eye"></div>
-      </div>
-      <div class="mouth"></div>
-    </div>
-    <div id="statusText">Press Start Otto to begin.</div>
-    <div class="controls">
-      <button class="primary" id="startBtn" onclick="startOtto()">Start Otto</button>
-      <button id="listenBtn" onclick="listen()" disabled>🎤 Talk to Otto</button>
-      <button onclick="testVoice()">Test Voice</button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h3 class="section-title">Camera</h3>
-    <p>Camera status: <span id="cameraState">Off</span></p>
-    <video id="cameraPreview" autoplay muted playsinline class="hidden"></video>
-    <div class="controls">
-      <button class="primary" onclick="openCamera()">Turn Camera On</button>
-      <button class="danger" onclick="openCameraOptions()">Turn Camera Off</button>
-    </div>
-    <p class="small">
-      The camera only runs after permission is granted. When turned off,
-      its video stream is stopped.
-    </p>
-  </div>
-</section>
-
-<section id="browser" class="page hidden">
-  <div class="panel">
-    <h2 class="section-title">Otto Browser</h2>
-    <div class="setting">
-      <label for="webAddress">Website or search</label>
-      <input id="webAddress" placeholder="YouTube, example.com, or search words">
-    </div>
-    <button class="primary" onclick="openWebsite()">Open</button>
-    <button onclick="openYouTube()">Open YouTube</button>
-  </div>
-</section>
-
-<section id="control" class="page hidden">
-  <div class="panel">
-    <h2 class="section-title">Control Center</h2>
-    <p>Control Otto's basic features.</p>
-    <div class="controls">
-      <button onclick="speak('Hello! I am Otto.')">Say Hello</button>
-      <button onclick="setFace('happy')">Happy Face</button>
-      <button onclick="setFace('surprised')">Surprised Face</button>
-      <button onclick="setFace('confused')">Confused Face</button>
-      <button onclick="setFace('idle')">Normal Face</button>
-    </div>
-    <hr style="border-color:#304762;margin:20px 0">
-    <button onclick="window.open('https://github.com','_blank')">Open GitHub</button>
-    <button onclick="window.open('https://web.whatsapp.com','_blank')">Open WhatsApp Web</button>
-    <p class="small">
-      Otto does not send messages or operate other accounts automatically.
-      External actions need their own setup and your confirmation.
-    </p>
-  </div>
-</section>
-
-<section id="settings" class="page hidden">
-  <div class="panel">
-    <h2 class="section-title">Settings</h2>
-
-    <div class="setting">
-      <label for="language">Language</label>
-      <select id="language" onchange="saveSettings();resetIdle()">
-        <option value="en-US">English</option>
-        <option value="ar-EG">Arabic (Egypt)</option>
-      </select>
-    </div>
-
-    <div class="setting">
-      <label for="idleDelay">Otto's idle talking</label>
-      <select id="idleDelay" onchange="saveSettings();resetIdle()">
-        <option value="0">Off</option>
-        <option value="30">After 30 seconds</option>
-        <option value="60" selected>After 1 minute</option>
-        <option value="120">After 2 minutes</option>
-        <option value="300">After 5 minutes</option>
-      </select>
-    </div>
-
-    <div class="setting">
-      <label for="voiceChoice">Voice</label>
-      <select id="voiceChoice" onchange="saveSettings()">
-        <option value="">Default voice</option>
-      </select>
-    </div>
-
-    <p class="small">Settings are saved in this browser on this device.</p>
-  </div>
-</section>
-
-<div class="panel hidden" id="cameraOptions">
-  <h3 class="section-title">Turn Camera Off</h3>
-  <p>Choose how long Otto should keep the camera off.</p>
-  <div class="setting">
-    <label for="offDuration">Temporary shutdown</label>
-    <select id="offDuration">
-      <option value="5">5 minutes</option>
-      <option value="15">15 minutes</option>
-      <option value="30">30 minutes</option>
-      <option value="60">1 hour</option>
-    </select>
-  </div>
-  <div class="controls">
-    <button class="primary" onclick="turnCameraOffTimed()">Turn Off Temporarily</button>
-    <button class="danger" onclick="turnCameraOffUntilManual()">Keep Off Until I Turn It On</button>
-    <button onclick="closeCameraOptions()">Cancel</button>
-  </div>
-  <p class="small">The camera will not restart automatically if you choose “Keep Off”.</p>
-</div>
-</main>
-
-<script>
-let cameraStream = null;
-let cameraTimer = null;
-let idleTimer = null;
-let started = false;
-let recognizing = false;
-let speaking = false;
-let recognition = null;
-let cameraBlocked = false;
-let cameraOffUntil = 0;
-
-const robot = document.getElementById("robot");
-const statusText = document.getElementById("statusText");
-const cameraPreview = document.getElementById("cameraPreview");
-
-function showPage(id) {
-  document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
-  document.getElementById(id).classList.remove("hidden");
-}
-
-function setFace(expression) {
-  robot.className = "robot " + expression;
-}
-
-function setStatus(message) {
-  statusText.textContent = message;
-  document.getElementById("topStatus").textContent = message;
-}
-
-function language() {
-  return document.getElementById("language").value;
-}
-
-function selectedVoice() {
-  const selected = document.getElementById("voiceChoice").value;
-  return speechSynthesis.getVoices().find(v => v.name === selected);
-}
-
-function speak(message, expression = "speaking") {
-  if (!("speechSynthesis" in window)) {
-    setStatus("Speech is not supported in this browser.");
-    return;
-  }
-
-  speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(message);
-  utterance.lang = language();
-  const voice = selectedVoice();
-  if (voice) utterance.voice = voice;
-
-  speaking = true;
-  setFace(expression);
-  setStatus("Otto is speaking...");
-
-  utterance.onend = () => {
-    speaking = false;
-    setFace("idle");
-    setStatus("Otto is ready.");
-    resetIdle();
-  };
-  utterance.onerror = () => {
-    speaking = false;
-    setFace("idle");
-    resetIdle();
-  };
-
-  speechSynthesis.speak(utterance);
-}
-
-function testVoice() {
-  speak(language() === "ar-EG"
-    ? "أهلاً! أنا أوتو. أنا جاهز."
-    : "Hello! I am Otto. I am ready.");
-}
-
-function startOtto() {
-  started = true;
-  document.getElementById("listenBtn").disabled = false;
-  document.getElementById("startBtn").textContent = "Otto Started";
-  setFace("happy");
-  speak(language() === "ar-EG"
-    ? "أهلاً! أنا أوتو. تقدر تكلمني."
-    : "Hello! I am Otto. You can talk to me.");
-  resetIdle();
-}
-
-function listen() {
-  const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    speak(language() === "ar-EG"
-      ? "خاصية التعرف على الصوت مش مدعومة في المتصفح ده."
-      : "Speech recognition is not supported in this browser.");
-    return;
-  }
-
-  if (recognizing) return;
-
-  recognition = new SpeechRecognition();
-  recognition.lang = language();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-
-  recognition.onstart = () => {
-    recognizing = true;
-    setFace("listening");
-    setStatus("Otto is listening...");
-  };
-
-  recognition.onresult = event => {
-    const words = event.results[0][0].transcript.toLowerCase();
-    handleCommand(words);
-  };
-
-  recognition.onerror = () => {
-    recognizing = false;
-    setFace("idle");
-    setStatus("Couldn't hear clearly. Try again.");
-    resetIdle();
-  };
-
-  recognition.onend = () => {
-    recognizing = false;
-    if (!speaking) setFace("idle");
-    resetIdle();
   };
 
   try {
     recognition.start();
   } catch (error) {
     setStatus("Microphone could not start.");
+  }
+}
+
+function toggleMute() {
+  muted = !muted;
+  const btn = document.getElementById("listenBtn");
+
+  if (muted) {
+    btn.textContent = "🔇 Unmute";
+    if (recognition) recognition.abort();
+    recognizing = false;
+    setFace("idle");
+    setStatus("Otto is muted.");
+  } else {
+    btn.textContent = "🎤 Mute";
+    setStatus("Otto is listening...");
+    listen();
   }
 }
 
